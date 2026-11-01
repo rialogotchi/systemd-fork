@@ -1,0 +1,24 @@
+#  This file is part of systemd.
+#
+#  systemd is free software; you can redistribute it and/or modify it under the
+#  terms of the GNU Lesser General Public License as published by the Free
+#  Software Foundation; either version 2.1 of the License, or (at your option)
+#  any later version.
+#
+# Local configuration should be created by either modifying this file (or a
+# copy of it placed in /etc/ if the original file is shipped in /usr/), or by
+# creating "drop-ins" in the /etc/systemd/report.conf.d/ directory.
+#
+# Use 'systemd-analyze cat-config systemd/report.conf' to display the full config.
+#
+# Reports/metrics are collected locally and kept in RAM only. NOTHING is sent
+# anywhere unless URL= below is set. There is no command line switch to pick a
+# destination: 'systemd-report upload' sends ONLY to the URL configured here.
+
+[Report]
+# URL=https://your.server/ingest
+# Header=Authorization: Bearer TOKEN
+# NetworkTimeoutSec=30s
+# ServerKeyFile={{CERTIFICATE_ROOT}}/private/systemd-report.pem
+# ServerCertificateFile={{CERTIFICATE_ROOT}}/certs/systemd-report.pem
+# TrustedCertificateFile={{CERTIFICATE_ROOT}}/ca/trusted.pem

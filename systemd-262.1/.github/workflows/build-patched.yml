@@ -1,0 +1,98 @@
+name: Build patched systemd
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "Meson buildtype"
+        type: choice
+        default: release
+        options: [release, debugoptimized, debug]
+      run_tests:
+        description: "Run unit tests for the changed code"
+        type: boolean
+        default: true
+      build_man:
+        description: "Build man pages (slower, needs xsltproc)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential meson ninja-build pkg-config gperf gettext rsync \
+            python3-jinja2 python3-pyelftools python3-lxml \
+            libcap-dev libmount-dev libblkid-dev libacl1-dev libseccomp-dev \
+            libcurl4-openssl-dev libmicrohttpd-dev libssl-dev libcryptsetup-dev \
+            libkmod-dev libpam0g-dev libfdisk-dev libp11-kit-dev libgcrypt20-dev \
+            libaudit-dev libzstd-dev liblz4-dev liblzma-dev libqrencode-dev \
+            libtss2-dev libfido2-dev libdw-dev libbpf-dev libelf-dev \
+            xsltproc docbook-xsl docbook-xml
+
+      - name: Sanity check source changes
+        run: |
+          # age data must be gone
+          if grep -rIn -i -E "birth.?date|BIRTH_DATE" src man docs test | grep -v -E "udev|birth_usec"; then
+            echo "::error::birthDate references still present"; exit 1
+          fi
+          # URL options must not exist on the command line any more
+          if grep -n -E 'OPTION_LONG\("(url|key|cert|trust|extra-header)"' src/report/report.c; then
+            echo "::error::systemd-report still has CLI upload options"; exit 1
+          fi
+          # journald must default to RAM
+          grep -A1 "journal-storage-default" meson_options.txt | grep -q "value : 'volatile'"
+
+      - name: Configure
+        run: |
+          meson setup build \
+            -Dbuildtype=${{ inputs.build_type }} \
+            -Djournal-storage-default=volatile \
+            -Dremote=enabled \
+            -Dlibcurl=enabled \
+            -Dman=${{ inputs.build_man && 'enabled' || 'disabled' }} \
+            -Dtests=true \
+            -Dinstall-tests=false
+
+      - name: Build
+        run: meson compile -C build
+
+      - name: Unit tests for changed code
+        if: ${{ inputs.run_tests }}
+        run: meson test -C build --print-errorlogs test-time-util test-user-record
+
+      - name: Smoke test, upload must be refused without URL
+        run: |
+          out=$(mktemp)
+          if ./build/systemd-report upload >"$out" 2>&1; then
+            echo "::error::upload succeeded without a configured URL"; cat "$out"; exit 1
+          fi
+          cat "$out"
+          grep -q "Upload is disabled" "$out"
+
+      - name: Smoke test, CLI --url is rejected
+        run: |
+          if ./build/systemd-report upload --url=http://example.invalid/ 2>/dev/null; then
+            echo "::error::--url must not exist"; exit 1
+          fi
+
+      - name: Install into staging dir
+        run: |
+          DESTDIR="$PWD/stage" meson install -C build --no-rebuild
+          tar -C stage -czf systemd-patched-${{ github.run_number }}.tar.gz .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: systemd-patched-${{ github.run_number }}
+          path: systemd-patched-${{ github.run_number }}.tar.gz
+          retention-days: 14
